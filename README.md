@@ -1,4 +1,4 @@
-# Josh Pyle — Technical Guides & Notes
+# Josh Pyle - Technical Guides & Notes
 
 Practical notes, examples, and lessons learned while building with AI and developer tools.
 

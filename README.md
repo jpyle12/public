@@ -18,7 +18,6 @@ Includes:
 - Confidence, validation, and model versioning
 - A complete Python support-routing example
 
-A practical companion to Allie Laabs's [*Don't Call It a Decision Model*](https://typesafe.ai/blog/dont-call-it-a-decision-model).
 
 ## About
 

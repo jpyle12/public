@@ -9,11 +9,11 @@ Asking *"Should we approve this?"* conflates two distinct tasks:
 1. **Semantic judgment:** What does the messy input text actually say or imply?
 2. **Policy:** Based on the facts, what do *our rules* say to do next?
 
-Jev provides fast, bounded semantic judgments — a "smart if-statement" for text. Specifically, Jev returns calibrated probability distributions for closed questions rather than generating freeform text. Deterministic code owns policy, math, and side effects, keeping application logic modular.
+Jev provides fast, bounded semantic judgments -- a "smart if-statement" for text. Specifically, Jev returns calibrated probability distributions for closed questions rather than generating freeform text. Deterministic code owns policy, math, and side effects, keeping application logic modular.
 
 **Mental model:** **Jev reads the evidence; your code applies the rules.**
 
-*This guide covers core single-pass primitives (Choice, Score, Noul). For multi-step patterns — Search, Retrieval, Ranking, Extraction — see the [TypeSafe Cookbooks](https://docs.typesafe.ai/cookbooks.md).*
+*This guide covers core single-pass primitives (Choice, Score, Noul). For multi-step patterns -- Search, Retrieval, Ranking, Extraction -- see the [TypeSafe Cookbooks](https://docs.typesafe.ai/cookbooks.md).*
 
 ---
 

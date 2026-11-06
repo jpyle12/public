@@ -1,55 +1,29 @@
 # Write Better Jev Questions
 
-*An independent guide by Josh Pyle · Updated November 6, 2026*
+*An independent guide by Josh Pyle · Updated November 5, 2026*
 
 **The question you give Jev shapes every answer it returns.**
 
-Most bad Jev calls fail for the same reason: they ask for a decision when Jev is best at a bounded judgment about the text.
+Asking *"Should we approve this?"* conflates two distinct tasks:
 
-Ask:
+1. **Semantic judgment:** What does the messy input text actually say or imply?
+2. **Policy:** Based on the facts, what do *our rules* say to do next?
 
-- "What does the input text actually say?"
-- "Which category is best supported by the evidence?"
-- "Does this claim hold given the text?"
+Jev provides fast, bounded semantic judgments -- a "smart if-statement" for text. Specifically, Jev returns calibrated probability distributions for closed questions rather than generating freeform text. Deterministic code owns policy, math, and side effects, keeping application logic modular.
 
-Not:
+**Mental model:** **Jev reads the evidence; your code applies the rules.**
 
-- "Should we approve this?"
-- "Is this a good fit?"
-- "Should we escalate this?"
-
-Those are policy questions. Jev is the evidence layer. Your application code decides what to do next.
-
-This guide covers the core single-pass primitives: `Choice`, `Score`, and `Noul`.
+*This guide covers core single-pass primitives (Choice, Score, Noul). For multi-step patterns -- Search, Retrieval, Ranking, Extraction -- see the [TypeSafe Cookbooks](https://docs.typesafe.ai/cookbooks.md).*
 
 ---
 
-## The mental model: Jev reads evidence; your code applies policy
+## From Playground to Prod: Is a hot dog a sandwich?
 
-Jev is a fast, bounded semantic judgment engine for closed questions.
+TypeSafe's API Playground opens with **"Is a hot dog a sandwich?"** That makes a fine demo, but a **poor** production question without explicit rules.
 
-It is not a generic decision maker. It does not know your business rules, thresholds, or side effects. It evaluates the text under explicit criteria and returns a calibrated probability distribution.
+### 1. Evidence demands constraints
 
-That distinction matters:
-
-1. Evidence judgment: what does the input text actually support?
-2. Policy: based on those facts, what should our app do?
-
-Keep them separate.
-
-A clean pattern is:
-
-- Jev answers the fact question
-- Python or TypeScript applies the policy decision
-- human review or business logic handles exceptions
-
----
-
-## From playground to production: is a hot dog a sandwich?
-
-TypeSafe's API Playground opens with "Is a hot dog a sandwich?" That makes a good demo. It is a bad production question unless your system defines the rules.
-
-If your food labeling app defines a sandwich as "filling between two separate pieces of bread," ask Jev to evaluate the evidence instead of settling the debate for you.
+Suppose your food labeling app defines a sandwich as *filling between two separate pieces of bread*. Ask Jev to evaluate what the text supports rather than settle the debate:
 
 ```python
 # An entry inside your questions dictionary.
@@ -62,86 +36,100 @@ If your food labeling app defines a sandwich as "filling between two separate pi
 )
 ```
 
-That question is narrow, testable, and useful. It does not commit your app to a universal policy on whether a hot dog is a sandwich. It just measures whether the input description supports the claim that the food has two separate bread pieces.
+### 2. Code Rules OK
 
-Your code can then decide:
+Application code owns policy; Jev strictly evaluates the input text.
+Defining explicit criteria gives you something to test, not a guarantee the model gets it right. By keeping the rules in code, you can change your decision thresholds without rewriting your questions, test those rules without an API call, and trace an unexpected result back to a specific assessment. And if a database record already contains a clean `bread_pieces: 2` column, skip the model entirely and use an `if` statement.
 
-- label it as a sandwich only if your rules say so
-- route to manual review if evidence is thin
-- reject ambiguous packaging claims when certainty is low
+### Hot dogs and Choice overlaps
+
+Suppose you're classifying hot dogs from menu text. New York's version is deliberately simple (dirty water is implied):
+
+```python
+# An entry inside your questions dictionary.
+"hot_dog_style": Choice(
+    instructions=(
+        "Which listed regional style is best supported by the preparation "
+        "and toppings described? Favor ingredient evidence over menu labels. "
+        "If details are missing or styles conflict, choose other_or_unclear."
+    ),
+    criteria={
+        "chicago": (
+            "Beef frank on a poppy-seed bun with yellow mustard, "
+            "neon-green relish, white onion, tomato, pickle, "
+            "sport peppers, and celery salt. "
+            "For this application's rubric, ketchup is disqualifying."
+        ),
+        "new_york": (
+            "Natural-casing frank with yellow mustard and "
+            "sauerkraut or griddled onions. Simple preparation."
+        ),
+        "other_or_unclear": (
+            "Conflicting signals, insufficient preparation detail, "
+            "or a style not listed here."
+        ),
+    },
+)
+```
+
+| Menu description | Expected label | Why |
+| :--- | :--- | :--- |
+| `"Chicago dog with ketchup"` | `other_or_unclear` | Ketchup directly conflicts with being a legitimate Chicagoan |
+| `"Natural-casing frank, yellow mustard, sauerkraut"` | `new_york` | Clean signal, no conflict |
+| `"Our famous house dog"` | `other_or_unclear` | The description lacks preparation details |
+
+Ketchup sends the order to `other_or_unclear`. Your code decides what to do next.
+The same logic applies to pineapple on pizza: Jev detects it; whether your app routes that order to a review queue is between you and your conscience.
 
 ---
 
-## The coding agent litmus test: kill the one-question monolith
+## The coding agent litmus test: Kill the One-Question Monolith
 
-Left to their own devices, coding agents often default to a one-question monolith:
+Left to their own devices, AI coding assistants default to **The One-Question Monolith** — prompts like `should_approve`, `recommend_action`, or `is_good_fit` that bundle evidence gathering, domain assumptions, and product policy into a single opaque verdict. When an assessment looks wrong, you can't tell whether the model misread the evidence or your unstated rules made a bad call.
 
-- `should_approve`
-- `recommend_action`
-- `is_good_fit`
-- `should_escalate`
+**The test:**
 
-These bundle multiple responsibilities into a single ambiguous prompt. They mix:
-
-- fact extraction
-- rule interpretation
-- threshold logic
-- action selection
-
-That is exactly what to avoid.
-
-Use this test:
-
-- If a reviewer can make a bounded judgment from the text alone, ask Jev.
-- If the next step requires thresholds, permissions, business priorities, or side effects, keep that in code.
+- Given the input and an *explicit* rubric, can a reviewer make a bounded judgment from the text alone? Ask Jev.
+- Does the next step require thresholds, business priorities, permissions, or side effects? Keep that in code.
 
 | Instead of a One-Question Monolith… | Ask Jev for the evidence… | Put the policy in code… |
 | :--- | :--- | :--- |
-| "Should we escalate this ticket?" | Are the steps to reproduce in place? How broken is the feature? | Escalate based on SLA rules and `.confidence` |
+| "Should we escalate this ticket?" | Are the steps to reproduce in place? How broken is the feature? | Escalate based on your SLA rules and `.confidence` |
 | "Should we approve this request?" | What type of request is it? Is condition X stated? | Run your eligibility rules in Python or TypeScript |
-| "Is this candidate qualified?" | Does the résumé show experience at the role's level? | Score and route in code; keep hiring calls with people |
-| "Should we remove this post?" | Does it contain a personal attack? Is explicit content described? | Your content policy decides; Jev only reads the post |
+| "Is this candidate qualified?" | Does the résumé show experience at the role's level? How much direct ownership of the function? | Score and route in code; keep hiring calls with people |
+| "Should we remove this post?" | Does it contain a personal attack? Is explicit content described? | Your content policy decides; Jev just reads the post |
 
 ---
 
 ## Four common question shapes (and where to start)
 
-Jev gives you three primitives: `Choice`, `Score`, and `Noul`.
-
-Each covers a common integration pattern:
+Jev provides three primitives (`Choice`, `Score`, `Noul`) that handle four standard integration patterns:
 
 | Pattern | Question shape | Primitive | What code owns |
 | :--- | :--- | :--- | :--- |
-| Classification | "Which bucket does this belong in?" | `Choice` | Downstream handling per bucket |
-| Routing signal | "Which queue fits this issue?" | `Choice` + `Noul` flags | Confidence checks and actual dispatch |
-| Rubric scoring | "Where does this sit on an ordered scale?" | `Score` | Cutoffs, weights, sorting |
-| Detection | "Does this single yes/no claim hold?" | `Noul` | Thresholds for action vs. human review |
+| **Classification** | "Which bucket does this belong in?" | `Choice` | Downstream handling per bucket |
+| **Routing signal** | "Which queue fits this issue?" | `Choice` + `Noul` flags | Confidence checks and actual dispatch |
+| **Rubric scoring** | "Where does this sit on an ordered scale?" | `Score` | Cutoffs, weights, and sorting |
+| **Detection** | "Does this single yes/no claim hold?" | `Noul` | Thresholds for action vs. human review |
 
-The best Jev questions are atomic. They ask for one bounded judgment you could verify by reading the text.
-
-Jev evaluates all questions in a single forward pass, so adding more questions often has little impact on latency.
+Keep each question atomic (a single judgment verifiable on sight). Jev evaluates questions in parallel via speculative fan-out, so adding more questions usually has little effect on response time ([see the fan-out pattern guide](https://docs.typesafe.ai/patterns/fan-out.md)).
 
 ### What comes back
 
 The Python SDK splits results by primitive type:
 
-- `response.choices["key"]`: `.choice`, `.probabilities`, `.confidence`
-- `response.scores["key"]`: `.score`, `.probabilities`, `.legend`, `.confidence`
-- `response.nouls["key"]`: `.noul` (probability that the proposition is true, from `0` to `1`)
+- **`response.choices["key"]`**: `.choice` (winning key), `.probabilities` (per-option), `.confidence`
+- **`response.scores["key"]`**: `.score` (probability-weighted mean from `0` to `N-1`, fractional, e.g. `1.43` on a 3-level rubric), `.probabilities`, `.legend`, `.confidence`
+- **`response.nouls["key"]`**: `.noul` (probability of the proposition being true, `0`–`1`), without a separate `.confidence` field.
 
-Important: `.confidence` measures how concentrated the probabilities are across your options. It is not a measure of truth. A confidence of `0.95` means the model strongly prefers one option; it does not mean the answer is definitely correct.
+**Note:** `.confidence` measures how concentrated the probabilities are across your defined options — not how often the answer is correct. A confidence of 0.95 indicates strong model preference for one option, not a 95% chance the answer is correct. Validate accuracy on labeled data.
 
 ---
 
 ## 1. Write better Choice questions
 
-Use `Choice` when you need one category from a defined set.
-
-Use `Noul` for binary yes/no checks.
-
-`Choice` usually fails when the criteria are circular labels that do not explain what separates one option from another.
-
-### Bad example
+Use `Choice` to select one category from a defined set. For binary yes/no, use `Noul`.
+`Choice` fails most often when criteria are circular labels that don't explain how to break ties on boundary cases.
 
 ```python
 # Bad: circular labels
@@ -154,10 +142,6 @@ Use `Noul` for binary yes/no checks.
     },
 )
 ```
-
-This is almost impossible to evaluate consistently. It tells Jev the label, not the boundary.
-
-### Better example
 
 ```python
 # Good: contrastive boundaries -- what it is (and isn't)
@@ -172,21 +156,17 @@ This is almost impossible to evaluate consistently. It tells Jev the label, not 
 )
 ```
 
-If you cannot explain in one sentence what separates two options, Jev probably cannot either.
+If you can't explain in one sentence what separates two options, neither can Jev. Always include an `unclear` or `other` way out for inputs that fall outside your criteria.
 
-Always include an `unclear` or `other` escape hatch for inputs that do not fit the rubric.
-
-Fewer, well-defined options are easier to distinguish and validate.
+Fewer, well-defined options are typically easier to distinguish and validate.
 
 ---
 
 ## 2. Write better Score questions
 
-Use `Score` for ordered judgments such as severity, quality, or degree of impact.
+Use `Score` to measure the degree of a quality on an ordered scale.
 
-The common mistake is using bare adjectives like `["Low", "Medium", "High"]`. Those labels are too abstract and have no shared meaning across inputs.
-
-### Bad example
+`Score` takes ordered level descriptions from lowest to highest. Bare adjectives (`["Low", "Medium", "High"]`) cause Jev to split probabilities because "Medium" has no shared meaning in your domain.
 
 ```python
 # Bad: unanchored adjectives
@@ -195,8 +175,6 @@ The common mistake is using bare adjectives like `["Low", "Medium", "High"]`. Th
     criteria=["Low", "Medium", "High"],
 )
 ```
-
-### Better example
 
 ```python
 # Good: ordered levels anchored in observable impact
@@ -210,9 +188,7 @@ The common mistake is using bare adjectives like `["Low", "Medium", "High"]`. Th
 )
 ```
 
-The goal is for a given score to mean the same thing on the 50th case as on the first. If adjacent levels keep splitting cleanly labeled examples, make each level more concrete.
-
-This is the upgrade pattern:
+The goal is for a given score to reflect the exact same standard on the 50th case as on the first. If adjacent levels keep splitting on clear inputs, upgrade each to a structured object:
 
 ```python
 "severity": Score(
@@ -234,24 +210,20 @@ This is the upgrade pattern:
 )
 ```
 
-Use the fewest levels that matter. Do not use `Score` to count items, compare dates, or do math. Compute those in Python and pass the result in `state` if Jev needs it.
+Use the fewest levels that actually matter, and make sure you can tell adjacent levels apart on real inputs before shipping.
+
+Don't use `Score` to count items, compare dates, or do math. Compute those in Python and pass the result in `state` if Jev needs it.
 
 ---
 
 ## 3. Write better Noul questions
 
-`Noul` evaluates a single binary proposition.
-
-Vague prompts create vague probabilities near `0.5`.
-
-### Bad example
+`Noul` evaluates a single binary proposition. Vague prompts cause probabilities to cluster around 0.5.
 
 ```python
 # Bad: relevant to what?
 "relevant": Noul(instructions="Is this message relevant?")
 ```
-
-### Better example
 
 ```python
 # Good: one observable yes/no check
@@ -260,7 +232,7 @@ Vague prompts create vague probabilities near `0.5`.
 )
 ```
 
-If two reviewers reading the same input would disagree, tighten the instruction or break the compound claim into multiple `Noul` checks.
+If two reviewers reading the same state would disagree on the answer, tighten the instruction or split compound checks into separate `Noul` questions.
 
 For subtle boundaries, add explicit `Look for` and `Exclude` clauses:
 
@@ -276,7 +248,7 @@ For subtle boundaries, add explicit `Look for` and `Exclude` clauses:
 
 ### Evidence verification
 
-Using the earlier `hot_dog_style` example, add a `Noul` question to check whether the evidence was sufficient:
+Using our `hot_dog_style` question from above, add a companion Noul to check whether the evidence was sufficient:
 
 ```python
 "style_has_sufficient_evidence": Noul(
@@ -287,35 +259,29 @@ Using the earlier `hot_dog_style` example, add a `Noul` question to check whethe
 )
 ```
 
-Then route the output accordingly:
+Then, in the routing logic:
 
 ```python
 style_has_sufficient_evidence_prob = response.nouls["style_has_sufficient_evidence"].noul
 if style_has_sufficient_evidence_prob < 0.75:
-    return "NEEDS_HUMAN_REVIEW"
+    return "NEEDS_HUMAN_REVIEW"  # Choice answered, but evidence was thin
 ```
 
-This is especially useful when inputs are user-generated and evidence quality varies; a highly confident `Choice` result on thin evidence is still a thin result.
+This pattern is especially useful when inputs are user-generated and evidence quality varies (a 100% confident Choice result on thin evidence is still a thin result).
 
 ---
 
-## 4. Putting it together: speculative fan-out and pure policy
+## 4. Putting it together: Speculative fan-out & pure function policy
 
-Jev can evaluate multiple questions in one forward pass. That is a feature, not a bug. It means you can ask for several atomic judgments at once without paying a large penalty for each additional question.
+Jev evaluates all questions in a single forward pass, so adding more questions usually has little effect on response time. Even when routing logic uses an answer conditionally (e.g. severity matters only if category is "technical"), include both in the same `system_one()` invocation. LLM coding assistants frequently default to serialized API calls; override this pattern explicitly.
 
-This lets you do this pattern:
+To override it, add this instruction at the start of any Jev-related session with your coding agent: *"Jev's `system_one()` evaluates all questions in a single forward pass. Bundle questions that can be evaluated from the same input into one call, then apply conditional routing in code."*
 
-- Ask Jev for evidence on individual facts
-- Normalize and combine the results in pure Python
-- Route to a queue or decision based on policy logic
+Instead of asking Jev *"Which team should own this and how urgent is it?"*, evaluate atomic evidence questions in one `system_one()` call and route the output through a pure function.
 
-Do not ask Jev a giant policy blob like: "Which team should own this and how urgent is it?"
+`state` provides context (raw text, structured fields, computed values). Omit unused fields.
 
-Ask a set of narrow questions instead, then route the output through a pure function.
-
-`state` provides context (raw text, structured fields, computed values). Include only what is necessary for the judgment.
-
-The example below also asks whether the sender explicitly requested a human. That routes to human support before category routing even runs.
+The example below also asks whether the sender explicitly requested a human — that routes to human support before category routing even runs.
 
 ```python
 """Companion example for 'Write Better Jev Questions'.
@@ -336,12 +302,16 @@ def route_ticket(
     wants_human_probability: float,
 ) -> str:
     """Return a recommended review queue based on bounded evidence."""
+    # Explicit user requests for human support take priority over confidence triage.
     if wants_human_probability >= 0.80:
         return "HUMAN_SUPPORT_REQUESTED"
+    # Low category confidence supersedes standard routing; better to triage than misroute.
     if category == "unclear" or category_confidence < 0.65:
         return "NEEDS_HUMAN_TRIAGE"
+    # Severity confidence only matters for technical tickets; don't penalize billing on a severity score.
     if category == "technical" and severity_confidence < 0.60:
         return "NEEDS_HUMAN_TRIAGE"
+    # Repro steps needed for priority routing: high severity without them goes to human triage.
     if category == "technical" and severity_score >= 1.5:
         if repro_probability >= 0.70:
             return "PRIORITY_TECHNICAL_REVIEW"
@@ -436,17 +406,17 @@ if __name__ == "__main__":
     main()
 ```
 
-Because `route_ticket()` is pure Python, the logic, fallback routing, and threshold adjustments can be unit tested offline without API calls. If a routing decision looks off, you know immediately whether the bug is in the evidence questions or in the policy rules.
+Because `route_ticket()` is pure Python, logic, fallback routing, and threshold adjustments can be unit tested offline without API calls. If a routing decision looks off, you know immediately whether the model assessed the evidence badly or your rules made the wrong call.
 
 ---
 
 ## 5. Upgrade models cleanly
 
-When TypeSafe updates Jev models, output distributions can shift even if prompts remain unchanged. Decoupling evidence evaluation from policy logic keeps upgrades routine.
+When TypeSafe updates Jev models, output distributions can shift even if prompts remain unchanged. Decoupling evidence evaluation from application policy keeps model upgrades routine.
 
-1. Pin versions in production: use exact versions like `jev-1.14.0` instead of `jev-latest`, and log `response.model`.
-2. Run side-by-side checks on frozen fixtures: compare distributions across regression inputs before changing router thresholds.
-3. Separate regression checks from benchmark sweeps: validate both edge cases and broader distribution metrics before deployment.
+1. **Pin versions in production:** Pin exact versions like `jev-1.14.0` rather than `jev-latest`, and log `response.model`.
+2. **Run side-by-side on frozen fixtures:** Compare distributions across benchmark inputs before adjusting policy thresholds.
+3. **Separate regression checks from benchmarks:** Verify both specific edge cases and broad distribution metrics before deployment.
 
 ---
 
@@ -454,10 +424,10 @@ When TypeSafe updates Jev models, output distributions can shift even if prompts
 
 | Symptom | Likely culprit | Fix |
 | :--- | :--- | :--- |
-| Wrong `Choice` on borderline inputs | Overlapping criteria | Add `not` exclusions and test mixed-intent messages |
-| High confidence on a wrong answer | Extraneous context or missing catch-all bucket | Trim irrelevant `state` fields; add an `unclear` category |
-| `Noul` hovers near `0.5` | Vague proposition | Tighten the instruction; route uncertain probabilities to human review |
-| `Score` splits between adjacent levels | Abstract rubric anchors | Convert criteria strings into `{"what": ..., "examples": [...]}` objects |
+| Wrong `Choice` on borderline inputs | Overlapping criteria | Add `"not for..."` exclusions and test mixed-intent messages |
+| High confidence on a wrong answer | Extraneous context, or categories that don't cover all inputs | Trim irrelevant `state` fields; add a catch-all way out; validate with labeled examples, not just confidence |
+| `Noul` hovers near `0.5` | Vague proposition | Tighten the instruction; route middle probabilities to human review |
+| `Score` splits between adjacent levels | Abstract rubric anchors | Convert criteria strings to `{"what": ..., "examples": [...]}` objects |
 | Answers flip when options are reordered | Option-order sensitivity | Test `Choice` questions with permuted option orders on frozen fixtures |
 | Behavior shifts overnight | Using `jev-latest` alias | Pin the exact model version and re-validate thresholds before bumping |
 | Bad date math or item counts | Asking Jev to calculate | Parse dates and count in Python; pass computed results in `state` |
@@ -468,15 +438,13 @@ Check the TypeSafe docs for version-specific edge cases before upgrading.
 
 ## 7. A pre-flight checklist
 
-Before shipping any Jev question, check the basics:
-
-- One judgment per question: ask for one clear, observable fact, not a bundled decision
-- Contrastive `Choice` criteria: define inclusions, exclusions, and fallback categories for every option
-- Anchored `Score` levels: use ordered behavioral descriptions rather than adjectives alone
-- Single-claim `Noul`: evaluate one yes/no proposition per question
-- Pure-function policy: put thresholds, weights, and fallback logic in application code
-- Focused `state`: include only the fields needed for judgment
-- Version hygiene: pin the model version, log results, and handle errors explicitly
+- **One judgment per question**: Ask for clear, observable evidence, not a One-Question Monolith like 'should we approve'
+- **Contrastive Choice criteria**: Define inclusions, exclusions, and fallback categories for every option
+- **Anchored Score levels**: Use ordered behavioral descriptions instead of unanchored labels
+- **Single-claim Noul**: Evaluate one yes/no proposition per question
+- **Pure-function policy**: Execute thresholds, weights, and fallback logic in application code
+- **Focused state**: Include only fields necessary for judgment
+- **Version hygiene**: Pin model versions, log responses, and explicitly handle errors
 
 ---
 
